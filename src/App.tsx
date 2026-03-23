@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Login } from './components/Login';
 import { Dashboard } from './components/Dashboard';
 import { ProjectDetail } from './components/ProjectDetail';
@@ -64,10 +64,49 @@ function App() {
   const [showLogin, setShowLogin] = useState(false);
   const [landingContent, setLandingContent] = useState<LandingContent>(defaultLandingContent);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  // Check if user is already authenticated on mount
+  React.useEffect(() => {
+    const checkAuth = async () => {
+      const token = localStorage.getItem('authToken');
+      if (token) {
+        try {
+          const response = await fetch('http://localhost:8000/api/users/me/', {
+            headers: { 'Authorization': `Token ${token}` },
+          });
+          
+          if (response.ok) {
+            const userProfile = await response.json();
+            const user: User = {
+              id: String(userProfile.id),
+              email: userProfile.email,
+              name: userProfile.first_name && userProfile.last_name 
+                ? `${userProfile.first_name} ${userProfile.last_name}`
+                : userProfile.username,
+              role: userProfile.profile?.role || 'student',
+            };
+            setCurrentUser(user);
+            setCurrentView('dashboard');
+          } else {
+            // Token invalid, clear it
+            localStorage.removeItem('authToken');
+          }
+        } catch (err) {
+          console.error('Auth check error:', err);
+          localStorage.removeItem('authToken');
+        }
+      }
+      setIsAuthChecking(false);
+    };
+
+    checkAuth();
+  }, []);
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
     setCurrentView('dashboard');
+    setShowLogin(false);
     // Add user to users list if not already present
     if (!allUsers.find(u => u.email === user.email)) {
       setAllUsers([...allUsers, user]);
@@ -77,6 +116,8 @@ function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     setCurrentView('dashboard');
+    localStorage.removeItem('authToken');
+    setShowLogin(false);
   };
 
   const handleNavigate = (view: ViewType, projectId?: string) => {
@@ -151,6 +192,21 @@ function App() {
       )
     );
   };
+
+  // Show loading while checking authentication
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-500 rounded-2xl mb-4 animate-pulse">
+            <div className="w-10 h-10 text-white" />
+          </div>
+          <h1 className="text-3xl font-bold text-white mb-2">PRIME</h1>
+          <p className="text-slate-300">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!currentUser) {
     if (!showLogin) {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Mail, Lock, UserCircle, ArrowLeft } from 'lucide-react';
+import { Mail, Lock, UserCircle, ArrowLeft, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 import { User, UserRole } from '../App';
 
 interface LoginProps {
@@ -7,39 +7,177 @@ interface LoginProps {
   onBack?: () => void;
 }
 
+const API_BASE = 'http://localhost:8000/api';
+
 export function Login({ onLogin, onBack }: LoginProps) {
   const [isSignup, setIsSignup] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState<UserRole>('student');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [userNotFound, setUserNotFound] = useState(false);
+
+  const handleBack = () => {
+    // Use browser history to go back
+    if (window.history.length > 1) {
+      window.history.back();
+    } else if (onBack) {
+      onBack();
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    setUserNotFound(false);
+    setIsLoading(true);
+
+    try {
+      // Try to get authentication token from backend
+      const response = await fetch(`${API_BASE}/auth/token/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email_or_username: email, password }),
+      });
+
+      if (!response.ok) {
+        // Try to get error message from backend
+        let errorMsg = 'Authentication failed. Please try again.';
+        try {
+          const errorData = await response.json();
+          errorMsg = errorData.error || errorMsg;
+        } catch (e) {
+          // If we can't parse JSON, use status-based message
+          if (response.status === 401) {
+            errorMsg = 'Invalid email or password';
+          }
+        }
+        
+        if (response.status === 401) {
+          setUserNotFound(true);
+        }
+        setError(errorMsg);
+        setIsLoading(false);
+        console.error('Login error:', response.status, errorMsg);
+        return;
+      }
+
+      const data = await response.json();
+      const token = data.token;
+
+      // Save token to localStorage
+      localStorage.setItem('authToken', token);
+
+      // Get user profile details
+      const profileResponse = await fetch(`${API_BASE}/users/me/`, {
+        headers: { 'Authorization': `Token ${token}` },
+      });
+
+      if (profileResponse.ok) {
+        const userProfile = await profileResponse.json();
+        
+        const user: User = {
+          id: String(userProfile.id),
+          email: userProfile.email,
+          name: userProfile.first_name && userProfile.last_name 
+            ? `${userProfile.first_name} ${userProfile.last_name}`
+            : userProfile.username,
+          role: userProfile.profile?.role || 'student',
+        };
+
+        onLogin(user);
+      } else {
+        setError('Failed to load user profile');
+        localStorage.removeItem('authToken');
+        console.error('Profile load failed:', profileResponse.status);
+      }
+    } catch (err) {
+      setError('Network error. Please check if backend is running on http://localhost:8000. Error: ' + String(err));
+      console.error('Login error:', err);
+    }
+
+    setIsLoading(false);
+  };
+
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    setIsLoading(true);
+
+    try {
+      // First, create the user via Django
+      const createResponse = await fetch(`${API_BASE}/users/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: email,
+          email: email,
+          password: password,
+          first_name: name.split(' ')[0],
+          last_name: name.split(' ').slice(1).join(' ') || '',
+        }),
+      });
+
+      if (!createResponse.ok) {
+        const errorData = await createResponse.json();
+        setError(
+          errorData.email?.[0] || 
+          errorData.username?.[0] || 
+          'Failed to create account. Email might already be registered.'
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      // Now set the user role in profile
+      const userData = await createResponse.json();
+      const profileUpdateResponse = await fetch(`${API_BASE}/profiles/${userData.id}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: role }),
+      });
+
+      if (!profileUpdateResponse.ok) {
+        console.error('Failed to update profile role');
+      }
+
+      setSuccess('Account created successfully! Please log in with your new account.');
+      setIsSignup(false);
+      setEmail('');
+      setPassword('');
+      setName('');
+      setIsLoading(false);
+    } catch (err) {
+      setError('Network error. Please check if backend is running.');
+      console.error('Signup error:', err);
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    const user: User = {
-      id: `user-${Date.now()}`,
-      email,
-      name: name || email.split('@')[0],
-      role,
-    };
-    
-    onLogin(user);
+    if (isSignup) {
+      handleSignup(e);
+    } else {
+      handleLogin(e);
+    }
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Back Button */}
-        {onBack && (
-          <button
-            onClick={onBack}
-            className="flex items-center gap-2 text-white/80 hover:text-white mb-6 font-medium transition"
-          >
-            <ArrowLeft className="w-5 h-5" />
-            Back to Home
-          </button>
-        )}
+        <button
+          onClick={handleBack}
+          className="flex items-center gap-2 text-white/80 hover:text-white mb-6 font-medium transition"
+        >
+          <ArrowLeft className="w-5 h-5" />
+          Back to Home
+        </button>
 
         {/* Logo/Header */}
         <div className="text-center mb-8">
@@ -60,6 +198,42 @@ export function Login({ onLogin, onBack }: LoginProps) {
               {isSignup ? 'Sign up to get started' : 'Sign in to continue'}
             </p>
           </div>
+
+          {/* Success Message */}
+          {success && (
+            <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-4 flex gap-3">
+              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+              <p className="text-green-800 text-sm">{success}</p>
+            </div>
+          )}
+
+          {/* Error Message */}
+          {error && (
+            <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex gap-3">
+                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-red-800 text-sm font-medium">{error}</p>
+                  
+                  {/* Show signup suggestion if user not found */}
+                  {userNotFound && !isSignup && (
+                    <button
+                      onClick={() => {
+                        setIsSignup(true);
+                        setError('');
+                        setUserNotFound(false);
+                        setPassword('');
+                        setName('');
+                      }}
+                      className="mt-2 text-red-700 hover:text-red-800 underline text-sm font-medium"
+                    >
+                      Create a new account instead
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {isSignup && (
@@ -162,15 +336,22 @@ export function Login({ onLogin, onBack }: LoginProps) {
 
             <button
               type="submit"
-              className="w-full bg-indigo-600 text-white py-3 rounded-lg font-medium hover:bg-indigo-700 transition shadow-lg shadow-indigo-500/30"
+              disabled={isLoading}
+              className="w-full bg-indigo-600 text-white py-3 rounded-lg font-medium hover:bg-indigo-700 transition shadow-lg shadow-indigo-500/30 disabled:bg-indigo-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
+              {isLoading && <Loader className="w-5 h-5 animate-spin" />}
               {isSignup ? 'Sign Up' : 'Sign In'}
             </button>
           </form>
 
           <div className="mt-6 text-center">
             <button
-              onClick={() => setIsSignup(!isSignup)}
+              onClick={() => {
+                setIsSignup(!isSignup);
+                setError('');
+                setSuccess('');
+                setUserNotFound(false);
+              }}
               className="text-indigo-600 hover:text-indigo-700 font-medium"
             >
               {isSignup
